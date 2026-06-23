@@ -40,6 +40,7 @@ class AIService {
     required String score,
     String province = '湖北省',
     String subjectType = '物理',
+    String? rank,
   }) async {
     final uri = Uri.parse('$baseUrl/api/v1/recommend');
 
@@ -47,6 +48,7 @@ class AIService {
       'score': int.tryParse(score) ?? 0,
       'province': province,
       'subject_type': subjectType,
+      if (rank != null && rank.isNotEmpty) 'rank': int.tryParse(rank),
     });
 
     http.Response response;

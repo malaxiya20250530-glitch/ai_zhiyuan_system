@@ -101,16 +101,30 @@ FALLBACK_DATA: dict[str, list[dict]] = {
 }
 
 
-def _build_fallback(score: int, subject: str) -> list[dict]:
-    """根据分数段和选科生成有区分度的降级结果"""
+def _build_fallback(score: int, subject: str, rank: int | None = None) -> list[dict]:
+    """根据分数段、选科和省排名生成有区分度的降级结果"""
     base = FALLBACK_DATA.get(subject, FALLBACK_DATA["默认"])
     result = []
     for item in base:
-        prob = item["probability"]
-        # 按概率等级偏移 min_rank，模拟分数越高 rank 越好
-        rank_offset = max(0, (650 - score) * 50)
-        adjusted = dict(item)
-        adjusted["min_rank"] = max(500, (item.get("min_rank", 10000) - rank_offset))
+        base_rank = item.get("min_rank", 10000)
+        if rank is not None and rank > 0:
+            # 用户位次比院校参考位次越靠前（数值越小），录取概率越高
+            rank_gap = base_rank - rank
+            if rank_gap > 3000:
+                adj_prob = "保底"
+            elif rank_gap > 500:
+                adj_prob = "稳妥"
+            elif rank_gap > -1000:
+                adj_prob = "冲刺"
+            else:
+                adj_prob = item["probability"]
+            adjusted = dict(item)
+            adjusted["probability"] = adj_prob
+            adjusted["min_rank"] = base_rank
+        else:
+            rank_offset = max(0, (650 - score) * 50)
+            adjusted = dict(item)
+            adjusted["min_rank"] = max(500, base_rank - rank_offset)
         result.append(adjusted)
     return result
 
@@ -155,7 +169,7 @@ async def get_recommendations(student: StudentProfile):
     # ── 无 API Key → 走降级方案 ──
     if not API_KEY or API_KEY == "YOUR_API_KEY_HERE":
         log.info("⚠️  无有效 API Key，使用降级数据 (score=%s, subject=%s)", student.score, student.subject_type)
-        data = _build_fallback(student.score, student.subject_type)
+        data = _build_fallback(student.score, student.subject_type, student.rank)
         save_record(student.score, student.province, student.subject_type, data)
         return {
             "status": "success",
@@ -163,6 +177,7 @@ async def get_recommendations(student: StudentProfile):
                 "score": student.score,
                 "province": student.province,
                 "subject": student.subject_type,
+                "rank": student.rank,
                 "mode": "fallback",
             },
             "data": data,
@@ -210,7 +225,7 @@ async def get_recommendations(student: StudentProfile):
     except Exception as e:
         log.error("双流觉察推理异常: %s", e)
         # 降级到 fallback
-        data = _build_fallback(student.score, student.subject_type)
+        data = _build_fallback(student.score, student.subject_type, student.rank)
         save_record(student.score, student.province, student.subject_type, data)
         return {
             "status": "success",

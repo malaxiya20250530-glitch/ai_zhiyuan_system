@@ -191,6 +191,20 @@ def test_history_recommend():
         check("文科返回 >0 条", len(result["data"]) > 0)
 
 
+def test_with_rank():
+    print("\n📊 [带位次推荐 — 物理 600分 省排名5000]")
+    result = api_post("/api/v1/recommend", {
+        "score": 600,
+        "province": "湖北省",
+        "subject_type": "物理",
+        "rank": 5000,
+    })
+    check("带位次返回 status=success", result.get("status") == "success")
+    if result.get("data"):
+        check("带位次返回 >0 条", len(result["data"]) > 0)
+        check("meta 含 rank字段", result.get("meta", {}).get("rank") == 5000)
+
+
 def test_boundary_scores():
     print("\n📏 [边界分数]")
     low = api_post("/api/v1/recommend", {"score": 200, "province": "湖北省", "subject_type": "物理"})
@@ -277,6 +291,7 @@ def main():
         test_normal_recommend()
         test_history_recommend()
         test_boundary_scores()
+        test_with_rank()
         test_database_records()
         test_frontend_alignment()
     finally:

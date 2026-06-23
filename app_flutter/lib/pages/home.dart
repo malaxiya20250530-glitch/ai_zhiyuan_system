@@ -15,6 +15,7 @@ class _HomePageState extends State<HomePage> {
   final TextEditingController _provinceController = TextEditingController(
     text: '湖北省',
   );
+  final TextEditingController _rankController = TextEditingController();
 
   String _selectedSubject = '物理';
   bool _loading = false;
@@ -25,59 +26,24 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _scoreController.dispose();
     _provinceController.dispose();
+    _rankController.dispose();
     super.dispose();
   }
 
-  Future<void> _submit() async {
+  void _submit() {
     if (!_formKey.currentState!.validate()) return;
 
-    setState(() => _loading = true);
-
-    try {
-      final response = await AIService.recommend(
-        score: _scoreController.text.trim(),
-        province: _provinceController.text.trim(),
-        subjectType: _selectedSubject,
-      );
-
-      if (!mounted) return;
-
-      if (response.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('暂无推荐结果，请稍后再试')),
-        );
-        return;
-      }
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ResultPage(
-            items: response.items,
-            score: _scoreController.text.trim(),
-            meta: response.meta,
-          ),
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ResultPage(
+          score: _scoreController.text.trim(),
+          province: _provinceController.text.trim(),
+          subjectType: _selectedSubject,
+          rank: _rankController.text.trim(),
         ),
-      );
-    } on AIServiceException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.message),
-          backgroundColor: Colors.red.shade700,
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('未知错误: $e'),
-          backgroundColor: Colors.red.shade700,
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+      ),
+    );
   }
 
   @override
@@ -148,6 +114,26 @@ class _HomePageState extends State<HomePage> {
                   }).toList(),
                   onChanged: (v) {
                     if (v != null) setState(() => _selectedSubject = v);
+                  },
+                ),
+                const SizedBox(height: 16),
+
+                // ── 省排名（位次）输入 ──
+                TextFormField(
+                  controller: _rankController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '全省排名（选填）',
+                    hintText: '例如：5000',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.format_list_numbered_outlined),
+                    helperText: '填写位次可获得更精准推荐',
+                  ),
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return null;
+                    final n = int.tryParse(v.trim());
+                    if (n == null || n < 1) return '请输入有效位次（正整数）';
+                    return null;
                   },
                 ),
                 const SizedBox(height: 16),
