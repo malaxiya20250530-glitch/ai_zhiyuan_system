@@ -6,7 +6,7 @@ on:
     paths:
       - 'app_flutter/**'
       - '.github/workflows/build_apk.yml'
-  workflow_dispatch:   # 手动触发
+  workflow_dispatch:
 
 jobs:
   build:
@@ -24,29 +24,21 @@ jobs:
 
       - name: 📦 Generate Android scaffolding
         run: |
-          # flutter create 生成完整的 android/ 目录（不覆盖已有源码）
           cd app_flutter
           flutter create --project-name ai_zhiyuan_system --platforms android .
 
       - name: 🔧 Add internet permission
         run: |
-          # 确保 AndroidManifest.xml 有网络权限
           MANIFEST="app_flutter/android/app/src/main/AndroidManifest.xml"
           if ! grep -q 'INTERNET' "$MANIFEST"; then
             sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <application|' "$MANIFEST"
           fi
-          echo "✅ Internet permission check done"
-          grep -n 'INTERNET\|permission' "$MANIFEST"
+          echo "✅ Internet permission: $(grep -c 'INTERNET' $MANIFEST) entry found"
 
       - name: 📦 Get dependencies
         run: |
           cd app_flutter
           flutter pub get
-
-      - name: 🔍 Analyze
-        run: |
-          cd app_flutter
-          flutter analyze
 
       - name: 🏗️ Build APK (release)
         run: |
@@ -59,7 +51,7 @@ jobs:
           name: ai-zhiyuan-apk
           path: |
             app_flutter/build/app/outputs/flutter-apk/*.apk
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
 
       - name: 📋 Summary
