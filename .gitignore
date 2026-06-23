@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+
+# Flutter
+app_flutter/.dart_tool/
+app_flutter/.packages
+app_flutter/build/
+app_flutter/.flutter-plugins*
+app_flutter/ios/Pods/
+app_flutter/android/.gradle/
+app_flutter/android/app/build/
+app_flutter/android/local.properties
+app_flutter/pubspec.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Android
+*.apk
+*.aab
+*.jks
+*.keystore
+local.properties
