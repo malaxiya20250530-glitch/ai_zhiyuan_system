@@ -36,3 +36,4 @@ Thumbs.db
 *.jks
 *.keystore
 local.properties
+*.db

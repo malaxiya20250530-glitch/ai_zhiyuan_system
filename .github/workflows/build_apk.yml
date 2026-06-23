@@ -1,0 +1,69 @@
+name: 🎯 Build APK (Cloud Compile)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app_flutter/**'
+      - '.github/workflows/build_apk.yml'
+  workflow_dispatch:   # 手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🛠️ Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.27.x
+
+      - name: 📦 Generate Android scaffolding
+        run: |
+          # flutter create 生成完整的 android/ 目录（不覆盖已有源码）
+          cd app_flutter
+          flutter create --project-name ai_zhiyuan_system --platforms android .
+
+      - name: 🔧 Add internet permission
+        run: |
+          # 确保 AndroidManifest.xml 有网络权限
+          MANIFEST="app_flutter/android/app/src/main/AndroidManifest.xml"
+          if ! grep -q 'INTERNET' "$MANIFEST"; then
+            sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <application|' "$MANIFEST"
+          fi
+          echo "✅ Internet permission check done"
+          grep -n 'INTERNET\|permission' "$MANIFEST"
+
+      - name: 📦 Get dependencies
+        run: |
+          cd app_flutter
+          flutter pub get
+
+      - name: 🔍 Analyze
+        run: |
+          cd app_flutter
+          flutter analyze
+
+      - name: 🏗️ Build APK (release)
+        run: |
+          cd app_flutter
+          flutter build apk --release --split-per-abi
+
+      - name: 📤 Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-zhiyuan-apk
+          path: |
+            app_flutter/build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: 📋 Summary
+        run: |
+          echo "## 📱 APK 构建完成" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          ls -lh app_flutter/build/app/outputs/flutter-apk/ 2>/dev/null | awk '{print "- " $NF " (" $5")"}' >> $GITHUB_STEP_SUMMARY || echo "⚠️ 没有找到 APK 文件" >> $GITHUB_STEP_SUMMARY
