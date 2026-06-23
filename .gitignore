@@ -37,3 +37,5 @@ Thumbs.db
 *.keystore
 local.properties
 *.db
+*.log
+*.db
