@@ -2,31 +2,105 @@
 """
 🎯 AI 志愿推荐系统 — 闭环测试 (End-to-End)
 
-测试流程：
-  1. 检查后端是否存活
-  2. 调用 /api/v1/recommend (正常路径)
-  3. 验证返回数据结构与前端模型完全对齐
-  4. 测试边缘情况：分数边界、空输入
-  5. 检查数据库记录是否写入
-  6. ✅/❌ 报告
+自动启动后端 → 运行全部测试 → 清理退出。
+无需手动先启动后端。
 
 运行: python3 scripts/test_e2e.py
 """
 
 import json
 import os
+import signal
+import subprocess
 import sys
+import time
 import urllib.request
 import urllib.error
+from pathlib import Path
 
+# ── 配置 ───────────────────────────────────────────────────
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = SCRIPT_DIR.parent
+BACKEND_DIR = PROJECT_DIR / "backend"
+BACKEND_SCRIPT = str(BACKEND_DIR / "app.py")
 BASE_URL = os.getenv("TEST_BASE_URL", "http://127.0.0.1:8000")
+BACKEND_PORT = 8000
 
 PASS = 0
 FAIL = 0
 
+backend_proc: subprocess.Popen | None = None
+
+
+# ── 后端生命周期管理 ───────────────────────────────────────
+
+def start_backend() -> subprocess.Popen | None:
+    """启动后端进程，返回 Popen 对象"""
+    if not BACKEND_DIR.exists():
+        print(f"  ⚠️  后端目录不存在: {BACKEND_DIR}")
+        return None
+    if not os.path.isfile(BACKEND_SCRIPT):
+        print(f"  ⚠️  后端脚本不存在: {BACKEND_SCRIPT}")
+        return None
+
+    print(f"  🚀 启动后端: python3 {BACKEND_SCRIPT}")
+    proc = subprocess.Popen(
+        ["python3", BACKEND_SCRIPT],
+        cwd=str(BACKEND_DIR),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        # 让后端进程成为进程组组长，方便后续 kill 整个组
+        start_new_session=True,
+    )
+    return proc
+
+
+def wait_for_backend(timeout: int = 15) -> bool:
+    """等待后端就绪，最多 timeout 秒"""
+    print(f"  ⏳ 等待后端就绪 (超时 {timeout}s)...", end="", flush=True)
+    for i in range(timeout):
+        try:
+            req = urllib.request.Request(f"{BASE_URL}/health")
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                data = json.loads(resp.read())
+                if data.get("status") == "ok":
+                    print(f" 第 {i+1}s ✅")
+                    return True
+        except Exception:
+            pass
+        print(".", end="", flush=True)
+        time.sleep(1)
+    print(" ❌")
+    return False
+
+
+def stop_backend(proc: subprocess.Popen | None) -> None:
+    """停止后端进程"""
+    if proc is None:
+        return
+    print("  🧹 清理后端...", end="", flush=True)
+    try:
+        # 先优雅终止
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            # 杀整个进程组
+            pgid = os.getpgid(proc.pid)
+            os.killpg(pgid, signal.SIGKILL)
+            proc.wait()
+    except Exception:
+        try:
+            proc.kill()
+            proc.wait()
+        except Exception:
+            pass
+    print(" ✅")
+
+
+# ── 测试工具 ───────────────────────────────────────────────
 
 def check(description: str, condition: bool, detail: str = "") -> None:
-    """测试断言"""
     global PASS, FAIL
     if condition:
         PASS += 1
@@ -39,7 +113,6 @@ def check(description: str, condition: bool, detail: str = "") -> None:
 
 
 def api_post(path: str, body: dict) -> dict:
-    """调用后端 API"""
     url = f"{BASE_URL}{path}"
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
@@ -50,13 +123,15 @@ def api_post(path: str, body: dict) -> dict:
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        return json.loads(e.read())
+        try:
+            return json.loads(e.read())
+        except Exception:
+            return {"error": f"HTTP {e.code}"}
     except Exception as e:
         return {"error": str(e)}
 
 
 def api_get(path: str) -> dict:
-    """GET 请求"""
     try:
         with urllib.request.urlopen(f"{BASE_URL}{path}", timeout=10) as resp:
             return json.loads(resp.read())
@@ -64,7 +139,7 @@ def api_get(path: str) -> dict:
         return {"error": str(e)}
 
 
-# ─── 测试用例 ─────────────────────────────────────────────────
+# ─── 测试用例 ──────────────────────────────────────────────
 
 def test_health():
     print("\n📡 [健康检查]")
@@ -80,7 +155,6 @@ def test_normal_recommend():
         "subject_type": "物理",
     })
 
-    # 顶层结构
     check("返回 status=success", result.get("status") == "success",
           f"got: {result.get('status')}")
     check("包含 meta 字段", "meta" in result)
@@ -94,7 +168,6 @@ def test_normal_recommend():
               f"keys: {list(item.keys())}")
         check("data[0] 含 min_rank", "min_rank" in item)
 
-        # 验证概率值合法
         valid_probs = {"冲刺", "稳妥", "保底"}
         for i, it in enumerate(result["data"]):
             prob = it.get("probability", "")
@@ -120,16 +193,12 @@ def test_history_recommend():
 
 def test_boundary_scores():
     print("\n📏 [边界分数]")
-
-    # 极低分
     low = api_post("/api/v1/recommend", {"score": 200, "province": "湖北省", "subject_type": "物理"})
     check("200分仍返回结果", low.get("status") == "success")
 
-    # 满分
     high = api_post("/api/v1/recommend", {"score": 750, "province": "湖北省", "subject_type": "物理"})
     check("750分仍返回结果", high.get("status") == "success")
 
-    # 零分
     zero = api_post("/api/v1/recommend", {"score": 0, "province": "湖北省", "subject_type": "物理"})
     check("0分仍返回结果", zero.get("status") == "success")
 
@@ -145,7 +214,6 @@ def test_database_records():
         rec = result["records"][0]
         check("记录含 score 字段", "score" in rec)
         check("记录含 recommendations (JSON字符串)", "recommendations" in rec)
-        # 验证 recommendations 是合法 JSON
         try:
             json.loads(rec["recommendations"])
             check("recommendations 可解析为 JSON", True)
@@ -154,10 +222,6 @@ def test_database_records():
 
 
 def test_frontend_alignment():
-    """
-    关键测试：验证后端返回的数据结构
-    与前端 ai_service.dart 的 RecommendItem 模型完全对齐
-    """
     print("\n🔄 [前后端对齐验证]")
     result = api_post("/api/v1/recommend", {
         "score": 600,
@@ -169,7 +233,6 @@ def test_frontend_alignment():
         check("有数据可验证", False, "data 为空")
         return
 
-    # 前端 RecommendItem.fromJson 期望的字段
     required_fields = {"university", "major", "probability", "min_rank"}
 
     for i, item in enumerate(result["data"]):
@@ -179,7 +242,6 @@ def test_frontend_alignment():
               not missing,
               f"缺少字段: {missing}")
 
-        # 类型对齐
         if "min_rank" in item:
             check(f"data[{i}] min_rank 是整数", isinstance(item["min_rank"], int),
                   f"type: {type(item['min_rank']).__name__}")
@@ -188,21 +250,38 @@ def test_frontend_alignment():
 # ─── 主入口 ───────────────────────────────────────────────────
 
 def main():
+    global PASS, FAIL, backend_proc
+
     print("╔══════════════════════════════════════════╗")
     print("║  🎯 AI 志愿推荐系统 — 闭环测试            ║")
     print("╚══════════════════════════════════════════╝")
     print(f"   后端地址: {BASE_URL}")
 
-    global PASS, FAIL
     PASS = 0
     FAIL = 0
 
-    test_health()
-    test_normal_recommend()
-    test_history_recommend()
-    test_boundary_scores()
-    test_database_records()
-    test_frontend_alignment()
+    # ── 启动后端 ──
+    backend_proc = start_backend()
+    if backend_proc is None:
+        print("\n❌ 无法启动后端，测试终止。")
+        sys.exit(1)
+
+    if not wait_for_backend():
+        stop_backend(backend_proc)
+        print("\n❌ 后端启动超时，测试终止。")
+        sys.exit(1)
+
+    # ── 执行测试 ──
+    try:
+        test_health()
+        test_normal_recommend()
+        test_history_recommend()
+        test_boundary_scores()
+        test_database_records()
+        test_frontend_alignment()
+    finally:
+        # ── 清理 ──
+        stop_backend(backend_proc)
 
     # ── 汇总 ──
     print(f"\n{'='*40}")
